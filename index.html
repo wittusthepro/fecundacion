@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Genesis Odyssey - Simulador Interactivo</title>
+    <style>
+        :root { --accent: #4af; --ecto: #0af; --meso: #f44; --endo: #fa4; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #020208; font-family: 'Segoe UI', Roboto, sans-serif; color: white; }
+        canvas { display: block; filter: contrast(1.1) brightness(1.1); }
+        
+        /* UI Overlay */
+        #ui-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        #hud { position: absolute; top: 25px; left: 25px; background: rgba(5, 10, 25, 0.85); padding: 25px; border-radius: 15px; border-left: 5px solid var(--accent); backdrop-filter: blur(10px); width: 320px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); pointer-events: auto; }
+        h1 { margin: 0; font-size: 1.4rem; letter-spacing: 2px; color: var(--accent); text-transform: uppercase; }
+        #phase-name { font-weight: bold; color: #fff; margin-top: 10px; display: block; }
+        #phase-desc { font-size: 0.9rem; color: #a0b0d0; margin: 10px 0; line-height: 1.4; }
+        #stats { display: flex; justify-content: space-between; margin-top: 15px; border-top: 1px solid #2a3b5c; padding-top: 15px; }
+        .stat-box { text-align: center; }
+        .stat-label { font-size: 0.7rem; text-transform: uppercase; color: #6a7b9c; display: block; }
+        .stat-value { font-size: 1.2rem; font-weight: bold; color: var(--endo); }
+
+        /* Color Selector */
+        #selector { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); display: none; gap: 15px; pointer-events: auto; background: rgba(0,0,0,0.6); padding: 20px; border-radius: 50px; backdrop-filter: blur(5px); border: 1px solid #333; }
+        .btn-layer { padding: 12px 25px; border: none; border-radius: 30px; cursor: pointer; font-weight: bold; transition: 0.3s; color: white; text-transform: uppercase; font-size: 0.8rem; }
+        .btn-layer:hover { transform: translateY(-5px); box-shadow: 0 5px 15px rgba(255,255,255,0.2); }
+        .active { outline: 3px solid white; outline-offset: 2px; transform: scale(1.1); }
+
+        /* Victory Screen */
+        #win { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(5, 15, 35, 0.95); padding: 40px; border-radius: 20px; text-align: center; border: 2px solid var(--accent); display: none; pointer-events: auto; z-index: 100; max-width: 500px; }
+        #win h2 { color: var(--accent); font-size: 2rem; margin-top: 0; }
+        .summary { text-align: left; font-size: 0.9rem; margin: 20px 0; background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; }
+        .summary b { color: var(--accent); }
+        button#reload { background: var(--accent); color: white; border: none; padding: 15px 40px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 1rem; }
+    </style>
+</head>
+<body>
+
+<div id="ui-container">
+    <div id="hud">
+        <h1>Genesis Odyssey</h1>
+        <span id="phase-name">FASE 1: FECUNDACIÓN</span>
+        <p id="phase-desc">Guía al espermatozoide evitando el moco cervical y los anticuerpos para alcanzar el ovocito.</p>
+        <div id="stats">
+            <div class="stat-box"><span class="stat-label">Tiempo</span><span id="day-val" class="stat-value">Día 1</span></div>
+            <div class="stat-box"><span class="stat-label">Estado</span><span id="state-val" class="stat-value">Activo</span></div>
+        </div>
+    </div>
+
+    <div id="selector">
+        <button class="btn-layer" style="background: var(--ecto);" onclick="pickLayer('ecto', this)">Ectodermo</button>
+        <button class="btn-layer" style="background: var(--meso);" onclick="pickLayer('meso', this)">Mesodermo</button>
+        <button class="btn-layer" style="background: var(--endo);" onclick="pickLayer('endo', this)">Endodermo</button>
+    </div>
+
+    <div id="win">
+        <h2>¡Vida Iniciada!</h2>
+        <p>Has completado con éxito el desarrollo embrionario temprano.</p>
+        <div class="summary">
+            <p><b style="color:var(--ecto)">● Ectodermo:</b> Formará el sistema nervioso y la piel.</p>
+            <p><b style="color:var(--meso)">● Mesodermo:</b> Formará músculos, esqueleto y sistema circulatorio.</p>
+            <p><b style="color:var(--endo)">● Endodermo:</b> Formará pulmones y sistema digestivo.</p>
+        </div>
+        <button id="reload" onclick="location.reload()">VOLVER A EMPEZAR</button>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+const { Engine, Render, Composite, Body, Bodies, Events, Vector, Mouse, MouseConstraint } = Matter;
+
+// Configuración Inicial
+const engine = Engine.create();
+engine.world.gravity.y = 0; 
+
+const canvas = document.createElement('canvas');
+document.body.appendChild(canvas);
+const ctx = canvas.getContext('2d');
+let w = window.innerWidth, h = window.innerHeight;
+canvas.width = w; canvas.height = h;
+
+let gameState = 1; // 1:Fecundación, 2:Mitosis, 3:Implantación, 4:Gastrulación
+let days = 1;
+let cells = [], obstacles = [], egg = null, endometrio = null;
+let player = null, particles = [], selectedColor = null;
+let counts = { ecto: 0, meso: 0, endo: 0 };
+
+// --- LÓGICA DE FASES ---
+
+function initPhase1() {
+    gameState = 1;
+    egg = Bodies.circle(w * 0.85, h / 2, 100, { isStatic: true, label: 'egg' });
+    player = Bodies.circle(100, h / 2, 10, { label: 'sperm', frictionAir: 0.08 });
+    
+    for(let i=0; i<25; i++) {
+        let obs = Bodies.circle(w*0.25 + Math.random()*w*0.5, Math.random()*h, 15 + Math.random()*25, {
+            label: 'obs', frictionAir: 0, restitution: 1, inertia: Infinity
+        });
+        Body.setVelocity(obs, {x: (Math.random()-0.5)*5, y: (Math.random()-0.5)*5});
+        obstacles.push(obs);
+    }
+    Composite.add(engine.world, [egg, player, ...obstacles]);
+}
+
+function startMitosis() {
+    gameState = 2; days = 2;
+    updateHUD("FASE 2: SEGMENTACIÓN", "El cigoto comienza la mitosis. Haz clic rítmicamente para dividir las células hasta llegar a la mórula (16 células).");
+    
+    // Explosión de partículas (Reacción Acrosómica)
+    for(let i=0; i<100; i++) particles.push(new Particle(player.position.x, player.position.y, '#fff'));
+    
+    setTimeout(() => {
+        Composite.clear(engine.world);
+        cells = []; obstacles = [];
+        spawnCell(w/2, h/2, 60);
+    }, 800);
+}
+
+function spawnCell(x, y, r) {
+    let c = Bodies.circle(x, y, r, { restitution: 0.6, frictionAir: 0.07, label: 'cell' });
+    cells.push(c);
+    Composite.add(engine.world, c);
+}
+
+function split() {
+    if (cells.length >= 16 || gameState !== 2) return;
+    let currentCells = [...cells];
+    let newR = currentCells[0].circleRadius * 0.82;
+    
+    currentCells.forEach(old => {
+        let pos = old.position;
+        Composite.remove(engine.world, old);
+        spawnCell(pos.x - 15, pos.y, newR);
+        spawnCell(pos.x + 15, pos.y, newR);
+    });
+    cells = cells.filter(c => !currentCells.includes(c));
+    days++;
+    if(cells.length >= 16) setTimeout(initPhase3, 1200);
+}
+
+function initPhase3() {
+    gameState = 3; days = 6;
+    updateHUD("FASE 3: IMPLANTACIÓN", "El blastocisto busca el endometrio. Arrastra el conjunto de células hacia la pared uterina a la derecha.");
+    
+    endometrio = Bodies.rectangle(w - 50, h/2, 100, h, { isStatic: true, label: 'endo_wall' });
+    Composite.add(engine.world, endometrio);
+    
+    const mouse = Mouse.create(canvas);
+    const mc = MouseConstraint.create(engine, { mouse: mouse, constraint: { stiffness: 0.1, render: { visible: false } } });
+    Composite.add(engine.world, mc);
+}
+
+function initPhase4() {
+    gameState = 4; days = 14;
+    updateHUD("FASE 4: GASTRULACIÓN", "Diferenciación celular. Selecciona una capa germinal abajo y colorea las células para asignar su destino biológico.");
+    document.getElementById('selector').style.display = 'flex';
+    cells.forEach(c => Body.setStatic(c, true));
+}
+
+// --- UTILS ---
+
+function updateHUD(name, desc) {
+    document.getElementById('phase-name').innerText = name;
+    document.getElementById('phase-desc').innerText = desc;
+}
+
+function pickLayer(layer, btn) {
+    selectedColor = layer === 'ecto' ? '#0af' : layer === 'meso' ? '#f44' : '#fa4';
+    document.querySelectorAll('.btn-layer').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x; this.y = y;
+        this.vx = (Math.random()-0.5)*12;
+        this.vy = (Math.random()-0.5)*12;
+        this.life = 1.0;
+        this.color = color;
+    }
+    update() { this.x += this.vx; this.y += this.vy; this.life -= 0.02; }
+    draw() {
+        ctx.fillStyle = `rgba(255,255,255,${this.life})`;
+        ctx.beginPath(); ctx.arc(this.x, this.y, 3, 0, Math.PI*2); ctx.fill();
+    }
+}
+
+// --- BUCLE PRINCIPAL ---
+
+let mousePos = { x: 0, y: 0 };
+window.addEventListener('mousemove', e => { mousePos = { x: e.clientX, y: e.clientY }; });
+window.addEventListener('mousedown', () => {
+    if (gameState === 2) split();
+    if (gameState === 4 && selectedColor) {
+        let hit = Matter.Query.point(cells, mousePos);
+        if (hit.length > 0) {
+            let c = hit[0];
+            if (!c.layer) {
+                c.layer = selectedColor;
+                if(selectedColor === '#0af') counts.ecto++;
+                if(selectedColor === '#f44') counts.meso++;
+                if(selectedColor === '#fa4') counts.endo++;
+                
+                if(counts.ecto > 3 && counts.meso > 3 && counts.endo > 3) {
+                    document.getElementById('win').style.display = 'block';
+                }
+            }
+        }
+    }
+});
+
+Events.on(engine, 'collisionStart', (e) => {
+    e.pairs.forEach(p => {
+        if (gameState === 1 && (p.bodyA.label === 'sperm' && p.bodyB.label === 'egg')) startMitosis();
+        if (gameState === 3 && (p.bodyA.label === 'cell' && p.bodyB.label === 'endo_wall')) initPhase4();
+    });
+});
+
+function loop() {
+    ctx.fillStyle = '#020208';
+    ctx.fillRect(0, 0, w, h);
+
+    // Dibujo de fondo / Endometrio
+    if (gameState >= 3) {
+        let grad = ctx.createLinearGradient(w-150, 0, w, 0);
+        grad.addColorStop(0, 'rgba(100, 20, 40, 0)'); grad.addColorStop(1, '#512');
+        ctx.fillStyle = grad; ctx.fillRect(w-200, 0, 200, h);
+    }
+
+    // Ovocito
+    if (egg && gameState === 1) {
+        ctx.shadowBlur = 40; ctx.shadowColor = '#f4a';
+        ctx.beginPath(); ctx.arc(egg.position.x, egg.position.y, 100, 0, Math.PI*2);
+        let g = ctx.createRadialGradient(egg.position.x, egg.position.y, 0, egg.position.x, egg.position.y, 100);
+        g.addColorStop(0, '#f8b'); g.addColorStop(1, '#835');
+        ctx.fillStyle = g; ctx.fill();
+        ctx.shadowBlur = 0;
+    }
+
+    // Espermatozoide
+    if (player && gameState === 1) {
+        let force = Vector.mult(Vector.normalise(Vector.sub(mousePos, player.position)), 0.0007);
+        Body.applyForce(player, player.position, force);
+        
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(player.position.x, player.position.y, 8, 0, Math.PI*2); ctx.fill();
+        
+        // Cola animada
+        ctx.beginPath(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+        ctx.moveTo(player.position.x, player.position.y);
+        let tailX = player.position.x - player.velocity.x * 12;
+        let tailY = player.position.y - player.velocity.y * 12;
+        ctx.quadraticCurveTo(tailX + Math.sin(Date.now()*0.02)*15, tailY + Math.cos(Date.now()*0.02)*15, tailX - player.velocity.x*10, tailY - player.velocity.y*10);
+        ctx.stroke();
+    }
+
+    // Obstáculos
+    obstacles.forEach(o => {
+        ctx.fillStyle = '#2a3b5c';
+        ctx.beginPath(); ctx.arc(o.position.x, o.position.y, o.circleRadius, 0, Math.PI*2); ctx.fill();
+        if(o.position.x < 0 || o.position.x > w) Body.setVelocity(o, {x: -o.velocity.x, y: o.velocity.y});
+        if(o.position.y < 0 || o.position.y > h) Body.setVelocity(o, {x: o.velocity.x, y: -o.velocity.y});
+    });
+
+    // Células (Embrión)
+    cells.forEach(c => {
+        ctx.beginPath(); ctx.arc(c.position.x, c.position.y, c.circleRadius, 0, Math.PI*2);
+        let g = ctx.createRadialGradient(c.position.x, c.position.y, 0, c.position.x, c.position.y, c.circleRadius);
+        g.addColorStop(0, c.layer || '#9ab'); g.addColorStop(1, '#1a2b4c');
+        ctx.fillStyle = g; ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.stroke();
+        // Núcleo
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.beginPath(); ctx.arc(c.position.x, c.position.y, c.circleRadius*0.2, 0, Math.PI*2); ctx.fill();
+    });
+
+    particles.forEach((p, i) => {
+        p.update(); p.draw();
+        if(p.life <= 0) particles.splice(i, 1);
+    });
+
+    document.getElementById('day-val').innerText = `Día ${Math.floor(days)}`;
+    Engine.update(engine, 16);
+    requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', () => { 
+    w = window.innerWidth; h = window.innerHeight; 
+    canvas.width = w; canvas.height = h;
+});
+
+initPhase1();
+loop();
+</script>
+</body>
+</html>
